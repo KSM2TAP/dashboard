@@ -1,0 +1,2388 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>แดชบอร์ดยอดขายรายวัน</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://html2canvas.herokuapp.com/dist/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        body {
+            box-sizing: border-box;
+            font-family: 'Sarabun', 'Noto Sans Thai', sans-serif;
+        }
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .card-shadow {
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        }
+        .chart-container {
+            position: relative;
+            height: 300px;
+        }
+        .mini-chart {
+            height: 200px;
+        }
+        .login-overlay {
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(5px);
+        }
+        .animate-fade-in {
+            animation: fadeIn 0.5s ease-in;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+        .status-connected { background-color: #00C853; }
+        .status-disconnected { background-color: #FF6B6B; }
+        .status-loading { background-color: #FFA726; }
+        .product-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 12px;
+            padding: 20px;
+            transition: transform 0.2s;
+        }
+        .product-card:hover {
+            transform: translateY(-2px);
+        }
+        .profit-positive { color: #00C853; font-weight: bold; }
+        .profit-negative { color: #FF6B6B; font-weight: bold; }
+        .dashboard-export {
+            background: white;
+            padding: 40px;
+            font-family: 'Sarabun', 'Noto Sans Thai', sans-serif;
+        }
+        .loading-spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-right: 8px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 font-sans">
+    <!-- Login Overlay -->
+    <div id="loginOverlay" class="fixed inset-0 login-overlay flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-8 max-w-md w-full mx-4 card-shadow">
+            <div class="text-center mb-6">
+                <h2 class="text-2xl font-bold text-gray-800 mb-2">แดชบอร์ดยอดขายรายวัน</h2>
+                <p class="text-gray-600">เชื่อมต่อกับ Google Sheets</p>
+            </div>
+            <form id="loginForm" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">อีเมล</label>
+                    <input type="email" id="loginEmail" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="sales@company.com" required>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">รหัสผ่าน</label>
+                    <input type="password" id="loginPassword" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="กรอกรหัสผ่าน" required>
+                </div>
+                <button type="submit" class="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition duration-200">
+                    เข้าสู่แดชบอร์ด
+                </button>
+                <p class="text-xs text-gray-500 text-center mt-4">ทดลองใช้: admin@demo.com / password123</p>
+            </form>
+        </div>
+    </div>
+
+    <!-- Main Dashboard -->
+    <div id="dashboard" class="hidden">
+        <!-- Header -->
+        <header class="gradient-bg text-white py-6 px-6">
+            <div class="max-w-7xl mx-auto">
+                <div class="flex justify-between items-center mb-4">
+                    <div>
+                        <h1 class="text-3xl font-bold">📊 แดชบอร์ดยอดขายรายวัน</h1>
+                        <p class="text-lg opacity-90 mt-2">เชื่อมต่อกับ Google Sheet - ข้อมูลตัวชี้วัดรายวันแบบเรียลไทม์</p>
+                        <div class="flex items-center mt-2">
+                            <span id="connectionStatus" class="status-indicator status-disconnected"></span>
+                            <span id="connectionText" class="text-sm opacity-75">ยังไม่เชื่อมต่อกับ Google Sheets</span>
+                            <span id="lastUpdated" class="text-sm opacity-75 ml-4">อัปเดตล่าสุด: ยังไม่มี</span>
+                        </div>
+                    </div>
+                    <div class="flex space-x-3">
+                        <button id="connectSheetsBtn" class="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 transition duration-200">
+                            📊 เชื่อมต่อ Sheets
+                        </button>
+                        <button id="refreshBtn" class="bg-white text-blue-600 px-4 py-2 rounded-md hover:bg-gray-100 transition duration-200 disabled:opacity-50" disabled>
+                            🔄 รีเฟรช
+                        </button>
+                        <button id="diagnosticBtn" class="bg-orange-600 text-white px-4 py-2 rounded-md hover:bg-orange-700 transition duration-200 disabled:opacity-50" disabled>
+                            🔍 ตรวจสอบ
+                        </button>
+                        <button id="addProductBtn" class="bg-yellow-600 text-white px-4 py-2 rounded-md hover:bg-yellow-700 transition duration-200 disabled:opacity-50" disabled>
+                            + เพิ่มสินค้า
+                        </button>
+                        <button id="exportBtn" class="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 transition duration-200 disabled:opacity-50" disabled>
+                            📸 ส่งออก
+                        </button>
+                        <button id="logoutBtn" class="bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 transition duration-200">
+                            ออกจากระบบ
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Setup Instructions -->
+        <div id="setupInstructions" class="max-w-7xl mx-auto px-6 py-6">
+            <div class="bg-blue-50 border-l-4 border-blue-500 rounded-lg p-6 mb-6">
+                <h3 class="font-semibold text-blue-800 mb-3">📋 แดชบอร์ดยอดขายรายวัน - โครงสร้าง Sheet</h3>
+                <div class="text-blue-700 space-y-3">
+                    <div id="connectionError" class="bg-red-50 border border-red-200 p-4 rounded text-sm mb-4 hidden">
+                        <p class="font-semibold text-red-800 mb-2">🔒 พบปัญหาการเชื่อมต่อ</p>
+                        <p class="text-red-700 mb-3">Sheet ของคุณต้องเปิดให้เข้าถึงได้สาธารณะ วิธีแก้ไข:</p>
+                        <ol class="list-decimal list-inside mt-2 text-red-700 space-y-1">
+                            <li>เปิด Google Sheet ของคุณ</li>
+                            <li>คลิกปุ่ม "แชร์" (มุมขวาบน)</li>
+                            <li>คลิก "เปลี่ยนเป็นทุกคนที่มีลิงก์"</li>
+                            <li><strong>ตั้งสิทธิ์เป็น "ผู้ดู" (ไม่ใช่ผู้แก้ไข)</strong></li>
+                            <li>คัดลอก Sheet ID จาก URL (ระหว่าง /d/ และ /edit)</li>
+                            <li>ลองเชื่อมต่ออีกครั้ง</li>
+                        </ol>
+                        <div class="mt-3 p-2 bg-yellow-50 border-l-4 border-yellow-400">
+                            <p class="text-yellow-800 font-medium">📋 สิทธิ์ที่ต้องการ: ผู้ดู</p>
+                            <p class="text-yellow-700 text-xs">Canva AI ต้องการเพียงสิทธิ์อ่านเพื่อแสดงข้อมูลอย่างปลอดภัย</p>
+                        </div>
+                    </div>
+                    <div class="bg-white p-4 rounded border text-sm">
+                        <p><strong>ค่าคงที่ (แถว 1-2):</strong></p>
+                        <p>• B1-I1: ราคาโปรโมชั่น 1-8</p>
+                        <p>• B2-I2: จำนวนชิ้นต่อโปรโมชั่น | N2: กำไรที่คาดหวัง | P2: ต้นทุนสินค้า</p>
+                        <p>• Q2: VAT 7% | S2: ค่าจัดส่ง | T2: ค่า COD 2% | U2: VAT COD | X2: VAT โฆษณา</p>
+                    </div>
+                    <div class="bg-white p-4 rounded border text-sm">
+                        <p><strong>ข้อมูลรายวัน (แถว 3 เป็นต้นไป):</strong></p>
+                        <p>• A3: วันที่ | B3-I3: ออเดอร์ต่อโปรโมชั่น</p>
+                        <p>• K3: ออเดอร์ | L3: ชิ้นสินค้า | M3: ยอดขาย | W3: ค่าโฆษณา</p>
+                        <p>• AA3: ค่าโฆษณาเฉลี่ย/ออเดอร์ | AE3: VAT ที่ต้องจ่าย | AG3: กำไร/ขาดทุน</p>
+                    </div>
+                    <p><strong>แดชบอร์ดแสดง:</strong> ออเดอร์, ชิ้นสินค้า, ยอดขาย, ค่าโฆษณา, ค่าโฆษณาเฉลี่ย/ออเดอร์, VAT ที่ต้องจ่าย, กำไร/ขาดทุน</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Date Range Filter -->
+        <section class="max-w-7xl mx-auto px-6 mb-6">
+            <div class="bg-white rounded-lg p-6 card-shadow">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold">📅 เลือกช่วงวันที่</h3>
+                    <div class="flex items-center space-x-2">
+                        <span id="selectedDaysCount" class="text-sm text-gray-600 bg-blue-50 px-3 py-1 rounded-full">เลือก 1 วัน</span>
+                        <span id="dateRangeDisplay" class="text-sm font-medium text-blue-600"></span>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">วันที่เริ่มต้น</label>
+                        <input type="date" id="startDate" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">วันที่สิ้นสุด</label>
+                        <input type="date" id="endDate" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div class="flex space-x-2">
+                        <button id="filterBtn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 flex-1" disabled>
+                            📊 อัปเดตแดชบอร์ด
+                        </button>
+                        <div class="relative">
+                            <button id="quickRangeBtn" class="px-3 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 disabled:opacity-50" disabled>
+                                ⚡ เร็ว
+                            </button>
+                            <div id="quickRangeMenu" class="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg z-10 hidden min-w-40">
+                                <button class="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50" data-range="today">วันนี้</button>
+                                <button class="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50" data-range="yesterday">เมื่อวาน</button>
+                                <button class="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50" data-range="last7">7 วันที่แล้ว</button>
+                                <button class="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50" data-range="last30">30 วันที่แล้ว</button>
+                                <button class="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50" data-range="thisMonth">เดือนนี้</button>
+                                <button class="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50" data-range="lastMonth">เดือนที่แล้ว</button>
+                                <button class="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50" data-range="thisYear">ปีนี้</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Overall Summary KPIs -->
+        <section class="max-w-7xl mx-auto px-6 mb-8">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-2xl font-bold">📈 สรุปภาพรวม</h2>
+                <div class="text-right">
+                    <div class="text-sm text-gray-600">ผลรวมทั้งหมด</div>
+                    <div id="summaryPeriod" class="text-lg font-semibold text-blue-600">วันนี้</div>
+                </div>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
+                <div class="bg-white rounded-lg p-4 card-shadow text-center">
+                    <div class="text-2xl mb-2">🛒</div>
+                    <div class="text-sm text-gray-600">ออเดอร์รวม</div>
+                    <div id="totalOrders" class="text-xl font-bold text-blue-600">0</div>
+                </div>
+                <div class="bg-white rounded-lg p-4 card-shadow text-center">
+                    <div class="text-2xl mb-2">📦</div>
+                    <div class="text-sm text-gray-600">ชิ้นสินค้ารวม</div>
+                    <div id="totalItems" class="text-xl font-bold text-green-600">0</div>
+                </div>
+                <div class="bg-white rounded-lg p-4 card-shadow text-center">
+                    <div class="text-2xl mb-2">💰</div>
+                    <div class="text-sm text-gray-600">ยอดขายรวม</div>
+                    <div id="totalSales" class="text-xl font-bold text-purple-600">0 บาท</div>
+                </div>
+                <div class="bg-white rounded-lg p-4 card-shadow text-center">
+                    <div class="text-2xl mb-2">📢</div>
+                    <div class="text-sm text-gray-600">ค่าโฆษณา</div>
+                    <div id="totalAds" class="text-xl font-bold text-orange-600">0 บาท</div>
+                </div>
+                <div class="bg-white rounded-lg p-4 card-shadow text-center">
+                    <div class="text-2xl mb-2">📊</div>
+                    <div class="text-sm text-gray-600">ค่าโฆษณาเฉลี่ย/ออเดอร์</div>
+                    <div id="avgAdsPerOrder" class="text-xl font-bold text-indigo-600">0 บาท</div>
+                </div>
+                <div class="bg-white rounded-lg p-4 card-shadow text-center">
+                    <div class="text-2xl mb-2">🏛️</div>
+                    <div class="text-sm text-gray-600">VAT ที่ต้องจ่าย</div>
+                    <div id="totalVAT" class="text-xl font-bold text-red-600">0 บาท</div>
+                </div>
+                <div id="totalProfitCard" class="rounded-lg p-4 card-shadow text-center">
+                    <div class="text-2xl mb-2">💎</div>
+                    <div class="text-sm opacity-90">กำไรสุทธิ</div>
+                    <div id="totalProfit" class="text-xl font-bold">0 บาท</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Daily Breakdown -->
+        <section class="max-w-7xl mx-auto px-6 mb-8" id="dailyBreakdownSection">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-2xl font-bold">📊 รายละเอียดรายวัน</h2>
+                <div class="text-sm text-gray-500">
+                    <span id="dailyBreakdownCount">0</span> วันในช่วงที่เลือก
+                </div>
+            </div>
+            <div class="bg-white rounded-lg p-6 card-shadow">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="border-b-2 border-gray-200">
+                                <th class="text-left py-3 font-semibold">วันที่</th>
+                                <th class="text-right py-3 font-semibold">ออเดอร์</th>
+                                <th class="text-right py-3 font-semibold">ชิ้นสินค้า</th>
+                                <th class="text-right py-3 font-semibold">ยอดขาย (บาท)</th>
+                                <th class="text-right py-3 font-semibold">ค่าโฆษณา (บาท)</th>
+                                <th class="text-right py-3 font-semibold">เฉลี่ย/ออเดอร์</th>
+                                <th class="text-right py-3 font-semibold">VAT (บาท)</th>
+                                <th class="text-right py-3 font-semibold">กำไร (บาท)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dailyBreakdownTable">
+                            <tr>
+                                <td colspan="8" class="text-center py-8 text-gray-500">
+                                    เลือกช่วงวันที่เพื่อดูรายละเอียดรายวัน
+                                </td>
+                            </tr>
+                        </tbody>
+                        <tfoot id="dailyBreakdownFooter" class="hidden">
+                            <tr class="border-t-2 border-gray-300 bg-gray-50 font-semibold">
+                                <td class="py-3">รวม</td>
+                                <td class="text-right py-3" id="footerOrders">0</td>
+                                <td class="text-right py-3" id="footerItems">0</td>
+                                <td class="text-right py-3" id="footerSales">0</td>
+                                <td class="text-right py-3" id="footerAds">0</td>
+                                <td class="text-right py-3" id="footerAvgPerOrder">0</td>
+                                <td class="text-right py-3" id="footerVAT">0</td>
+                                <td class="text-right py-3" id="footerProfit">0</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- Product Breakdown -->
+        <section class="max-w-7xl mx-auto px-6 mb-8">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-2xl font-bold">🎯 ประสิทธิภาพสินค้า</h2>
+                <div class="text-sm text-gray-500">
+                    <span id="productCount">0</span> สินค้าที่เชื่อมต่อ
+                </div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="productCards">
+                <!-- Product cards will be populated here -->
+            </div>
+        </section>
+
+        <!-- Charts Section -->
+        <section class="max-w-7xl mx-auto px-6 mb-8">
+            <h2 class="text-2xl font-bold mb-6">📊 กราฟวิเคราะห์</h2>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                <div class="bg-white rounded-lg p-6 card-shadow">
+                    <h3 class="text-lg font-semibold mb-4">แนวโน้มยอดขายรายวัน <span id="trendChartPeriod">(ช่วงที่เลือก)</span></h3>
+                    <div class="chart-container">
+                        <canvas id="salesTrendChart"></canvas>
+                    </div>
+                </div>
+                <div class="bg-white rounded-lg p-6 card-shadow">
+                    <h3 class="text-lg font-semibold mb-4">ออเดอร์ตามสินค้า</h3>
+                    <div class="chart-container">
+                        <canvas id="productOrdersChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="bg-white rounded-lg p-6 card-shadow">
+                    <h3 class="text-lg font-semibold mb-4">การกระจายต้นทุน</h3>
+                    <div class="chart-container">
+                        <canvas id="costDistributionChart"></canvas>
+                    </div>
+                </div>
+                <div class="bg-white rounded-lg p-6 card-shadow">
+                    <h3 class="text-lg font-semibold mb-4">กำไรตามสินค้า</h3>
+                    <div class="chart-container">
+                        <canvas id="profitByProductChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Detailed Data Table -->
+        <section class="max-w-7xl mx-auto px-6 mb-8">
+            <div class="bg-white rounded-lg p-6 card-shadow">
+                <h3 class="text-lg font-semibold mb-4">📋 ข้อมูลสินค้าโดยละเอียด</h3>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="border-b">
+                                <th class="text-left py-2">สินค้า</th>
+                                <th class="text-right py-2">ออเดอร์</th>
+                                <th class="text-right py-2">ชิ้นสินค้า</th>
+                                <th class="text-right py-2">ยอดขาย (บาท)</th>
+                                <th class="text-right py-2">ค่าโฆษณา (บาท)</th>
+                                <th class="text-right py-2">VAT (บาท)</th>
+                                <th class="text-right py-2">กำไร (บาท)</th>
+                                <th class="text-center py-2">การดำเนินการ</th>
+                            </tr>
+                        </thead>
+                        <tbody id="productTable">
+                            <tr>
+                                <td colspan="8" class="text-center py-8 text-gray-500">
+                                    เชื่อมต่อกับ Google Sheets เพื่อดูข้อมูลสินค้า
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Google Sheets Connection Modal -->
+    <div id="sheetsModal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-semibold">เชื่อมต่อ Google Sheets</h3>
+                <button id="closeSheetsModal" class="text-gray-500 hover:text-gray-700">✕</button>
+            </div>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Google Sheet ID</label>
+                    <input type="text" id="sheetId" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms">
+                    <p class="text-xs text-gray-500 mt-1">คัดลอกจาก URL ของ Google Sheet ระหว่าง /d/ และ /edit</p>
+                </div>
+                <div class="flex justify-end space-x-3">
+                    <button id="cancelSheetsBtn" class="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50">ยกเลิก</button>
+                    <button id="connectBtn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
+                        <span class="loading-spinner hidden"></span>
+                        เชื่อมต่อ
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Product Modal -->
+    <div id="addProductModal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-semibold">เพิ่มสินค้าใหม่</h3>
+                <button id="closeAddProductModal" class="text-gray-500 hover:text-gray-700">✕</button>
+            </div>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">ชื่อสินค้า</label>
+                    <input type="text" id="productName" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="สินค้า C">
+                    <p class="text-xs text-gray-500 mt-1">จะสร้าง sheet ใหม่ใน Google Sheets ของคุณ</p>
+                </div>
+                <div class="flex justify-end space-x-3">
+                    <button id="cancelAddProductBtn" class="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50">ยกเลิก</button>
+                    <button id="addProductConfirmBtn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
+                        เพิ่มสินค้า
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export Options Modal -->
+    <div id="exportModal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-semibold">ส่งออกแดชบอร์ด</h3>
+                <button id="closeExportModal" class="text-gray-500 hover:text-gray-700">✕</button>
+            </div>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">รูปแบบการส่งออก</label>
+                    <select id="exportFormat" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="png">PNG (คุณภาพสูง)</option>
+                        <option value="jpeg">JPEG (บีบอัด)</option>
+                        <option value="pdf">PDF (เอกสาร)</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">รวมส่วน</label>
+                    <div class="space-y-2">
+                        <label class="flex items-center">
+                            <input type="checkbox" id="includeSummary" checked class="mr-2">
+                            <span class="text-sm">สรุปภาพรวม</span>
+                        </label>
+                        <label class="flex items-center">
+                            <input type="checkbox" id="includeProducts" checked class="mr-2">
+                            <span class="text-sm">ประสิทธิภาพสินค้า</span>
+                        </label>
+                        <label class="flex items-center">
+                            <input type="checkbox" id="includeCharts" checked class="mr-2">
+                            <span class="text-sm">กราฟวิเคราะห์</span>
+                        </label>
+                        <label class="flex items-center">
+                            <input type="checkbox" id="includeTable" class="mr-2">
+                            <span class="text-sm">ตารางข้อมูลโดยละเอียด</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="flex justify-end space-x-3">
+                    <button id="cancelExportBtn" class="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50">ยกเลิก</button>
+                    <button id="exportConfirmBtn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
+                        <span class="loading-spinner hidden"></span>
+                        ส่งออกแดชบอร์ด
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global Variables
+        let productsData = {};
+        let currentSheetId = localStorage.getItem('multiProductSheetId') || '1_AlPuPpKbc1vkuEFXZg7ipM3BDoJ-w_dw2HU5JXGkaE';
+        let isConnected = false;
+        let charts = {};
+        
+        // Set default date range to match your Google Sheet data (September 2025)
+        // Since your sheet starts from 18/09/2025, we'll set a range that includes your data
+        let currentStartDate = '2025-09-01'; // September 1, 2025
+        let currentEndDate = '2025-09-30';   // September 30, 2025
+        let allDailyData = []; // Store all daily data for range filtering
+        
+        console.log(`🗓️ ตั้งช่วงวันที่เริ่มต้น: ${currentStartDate} ถึง ${currentEndDate} (เดือนปัจจุบัน)`);
+
+        // Thai date formatting function
+        function formatDateThai(dateStr) {
+            if (!dateStr) return '';
+            
+            try {
+                // Handle both YYYY-MM-DD and DD/MM/YYYY formats
+                let date;
+                if (dateStr.includes('/')) {
+                    // DD/MM/YYYY format
+                    const parts = dateStr.split('/');
+                    if (parts.length === 3) {
+                        const day = parseInt(parts[0], 10);
+                        const month = parseInt(parts[1], 10);
+                        const year = parseInt(parts[2], 10);
+                        date = new Date(year, month - 1, day);
+                    }
+                } else {
+                    // YYYY-MM-DD format
+                    date = new Date(dateStr + 'T12:00:00');
+                }
+                
+                if (date && !isNaN(date.getTime())) {
+                    const day = date.getDate().toString().padStart(2, '0');
+                    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+                    const year = date.getFullYear();
+                    return `${day}/${month}/${year}`;
+                }
+            } catch (error) {
+                console.warn('Error formatting date:', dateStr, error);
+            }
+            
+            return dateStr; // Return original if parsing fails
+        }
+
+        // Authentication - Fixed login functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('🔧 เริ่มต้นระบบเข้าสู่ระบบ');
+            
+            const loginForm = document.getElementById('loginForm');
+            if (loginForm) {
+                loginForm.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    console.log('📝 ฟอร์มเข้าสู่ระบบถูกส่ง');
+                    
+                    const email = document.getElementById('loginEmail').value.trim();
+                    const password = document.getElementById('loginPassword').value.trim();
+                    
+                    console.log('🔍 ตรวจสอบข้อมูล:', { email: email, passwordLength: password.length });
+                    
+                    if (email === 'admin@demo.com' && password === 'password123') {
+                        console.log('✅ ข้อมูลถูกต้อง - เข้าสู่แดชบอร์ด');
+                        
+                        try {
+                            // Hide login overlay
+                            const loginOverlay = document.getElementById('loginOverlay');
+                            const dashboard = document.getElementById('dashboard');
+                            
+                            if (loginOverlay && dashboard) {
+                                loginOverlay.classList.add('hidden');
+                                dashboard.classList.remove('hidden');
+                                dashboard.classList.add('animate-fade-in');
+                                
+                                console.log('🎯 แสดงแดชบอร์ดแล้ว');
+                                
+                                // Set date inputs to current range
+                                const startDateInput = document.getElementById('startDate');
+                                const endDateInput = document.getElementById('endDate');
+                                
+                                if (startDateInput && endDateInput) {
+                                    startDateInput.value = currentStartDate;
+                                    endDateInput.value = currentEndDate;
+                                    console.log(`🗓️ ตั้งช่วงวันที่: ${currentStartDate} ถึง ${currentEndDate}`);
+                                    updateDateRangeDisplay();
+                                }
+                                
+                                // Load demo data first to show something immediately
+                                console.log('🚀 โหลดข้อมูลทดลอง...');
+                                loadDemoData();
+                                
+                                // Then try to connect to Google Sheet
+                                setTimeout(() => {
+                                    console.log('🔗 พยายามเชื่อมต่อ Google Sheet...');
+                                    connectToSheet('1_AlPuPpKbc1vkuEFXZg7ipM3BDoJ-w_dw2HU5JXGkaE');
+                                }, 500);
+                            } else {
+                                console.error('❌ ไม่พบ element ที่จำเป็น');
+                                alert('เกิดข้อผิดพลาดในการโหลดหน้า กรุณารีเฟรชหน้าเว็บ');
+                            }
+                        } catch (error) {
+                            console.error('❌ ข้อผิดพลาดในการเข้าสู่ระบบ:', error);
+                            alert('เกิดข้อผิดพลาด กรุณาลองใหม่');
+                        }
+                    } else {
+                        console.log('❌ ข้อมูลไม่ถูกต้อง');
+                        alert('ข้อมูลไม่ถูกต้อง\n\nใช้:\nอีเมล: admin@demo.com\nรหัสผ่าน: password123');
+                    }
+                });
+            } else {
+                console.error('❌ ไม่พบฟอร์มเข้าสู่ระบบ');
+            }
+        });
+
+        document.getElementById('logoutBtn').addEventListener('click', function() {
+            document.getElementById('loginOverlay').classList.remove('hidden');
+            document.getElementById('dashboard').classList.add('hidden');
+        });
+
+        // Modal Controls
+        document.getElementById('connectSheetsBtn').addEventListener('click', function() {
+            document.getElementById('sheetId').value = currentSheetId;
+            document.getElementById('sheetsModal').classList.remove('hidden');
+        });
+
+        document.getElementById('closeSheetsModal').addEventListener('click', function() {
+            document.getElementById('sheetsModal').classList.add('hidden');
+        });
+
+        document.getElementById('cancelSheetsBtn').addEventListener('click', function() {
+            document.getElementById('sheetsModal').classList.add('hidden');
+        });
+
+        document.getElementById('connectBtn').addEventListener('click', function() {
+            const sheetId = document.getElementById('sheetId').value.trim();
+            if (sheetId) {
+                connectToSheet(sheetId);
+                document.getElementById('sheetsModal').classList.add('hidden');
+            } else {
+                alert('กรุณากรอก Google Sheet ID ที่ถูกต้อง');
+            }
+        });
+
+        // Add Product Modal
+        document.getElementById('addProductBtn').addEventListener('click', function() {
+            if (!isConnected) {
+                alert('กรุณาเชื่อมต่อกับ Google Sheets ก่อน');
+                return;
+            }
+            document.getElementById('addProductModal').classList.remove('hidden');
+        });
+
+        document.getElementById('closeAddProductModal').addEventListener('click', function() {
+            document.getElementById('addProductModal').classList.add('hidden');
+        });
+
+        document.getElementById('cancelAddProductBtn').addEventListener('click', function() {
+            document.getElementById('addProductModal').classList.add('hidden');
+        });
+
+        document.getElementById('addProductConfirmBtn').addEventListener('click', function() {
+            const productName = document.getElementById('productName').value.trim();
+            if (productName) {
+                addNewProduct(productName);
+                document.getElementById('addProductModal').classList.add('hidden');
+                document.getElementById('productName').value = '';
+            } else {
+                alert('กรุณากรอกชื่อสินค้า');
+            }
+        });
+
+        // Export Modal
+        document.getElementById('exportBtn').addEventListener('click', function() {
+            if (!isConnected) {
+                alert('กรุณาเชื่อมต่อกับ Google Sheets ก่อน');
+                return;
+            }
+            document.getElementById('exportModal').classList.remove('hidden');
+        });
+
+        document.getElementById('closeExportModal').addEventListener('click', function() {
+            document.getElementById('exportModal').classList.add('hidden');
+        });
+
+        document.getElementById('cancelExportBtn').addEventListener('click', function() {
+            document.getElementById('exportModal').classList.add('hidden');
+        });
+
+        document.getElementById('exportConfirmBtn').addEventListener('click', function() {
+            exportDashboard();
+        });
+
+        // Control Buttons
+        document.getElementById('refreshBtn').addEventListener('click', function() {
+            if (currentSheetId) {
+                loadAllProductData(currentSheetId);
+            }
+        });
+
+        // Diagnostic button to help troubleshoot data issues
+        document.getElementById('diagnosticBtn').addEventListener('click', async function() {
+            if (!currentSheetId) {
+                alert('กรุณาเชื่อมต่อกับ Google Sheet ก่อน');
+                return;
+            }
+            
+            console.log('🔍 กำลังตรวจสอบระบบ...');
+            alert('กำลังตรวจสอบระบบ... กรุณาตรวจสอบ browser console (F12) สำหรับผลลัพธ์โดยละเอียด');
+            
+            try {
+                // Test CSV access
+                const csvUrl = `https://docs.google.com/spreadsheets/d/${currentSheetId}/export?format=csv&gid=0&cachebust=${Date.now()}`;
+                console.log('🌐 ทดสอบ CSV URL:', csvUrl);
+                
+                const response = await fetch(csvUrl);
+                console.log('📡 สถานะการตอบกลับ:', response.status, response.statusText);
+                
+                if (response.ok) {
+                    const csvText = await response.text();
+                    console.log('📄 ความยาว CSV:', csvText.length, 'ตัวอักษร');
+                    console.log('📋 1000 ตัวอักษรแรก:', csvText.substring(0, 1000));
+                    
+                    const lines = csvText.split('\n');
+                    console.log('📊 จำนวนแถวทั้งหมด:', lines.length);
+                    
+                    // Check specific rows
+                    console.log('🔍 ตรวจสอบแถวสำคัญ:');
+                    console.log('แถว 1 (หัวข้อ):', lines[0]?.substring(0, 200));
+                    console.log('แถว 2 (ค่าคงที่):', lines[1]?.substring(0, 200));
+                    console.log('แถว 3 (ข้อมูลแรก):', lines[2]?.substring(0, 200));
+                    
+                    // Parse and check data
+                    const testData = parseCSVData(csvText);
+                    console.log('✅ ข้อมูลที่แยกวิเคราะห์ได้:', testData.length, 'รายการ');
+                    
+                    if (testData.length > 0) {
+                        console.log('📈 ตัวอย่างข้อมูล:', testData[0]);
+                        alert(`✅ การตรวจสอบเสร็จสิ้น!\n\nพบข้อมูลที่ถูกต้อง ${testData.length} รายการ\nตรวจสอบ console สำหรับการวิเคราะห์โดยละเอียด`);
+                    } else {
+                        alert('❌ ไม่พบข้อมูลที่ถูกต้อง!\n\nตรวจสอบ console สำหรับคำแนะนำการแก้ไข');
+                    }
+                } else {
+                    console.error('❌ ไม่สามารถเข้าถึง sheet ได้:', response.status);
+                    alert('❌ ไม่สามารถเข้าถึง sheet ของคุณได้!\n\nกรุณาตรวจสอบว่าได้แชร์เป็น "ทุกคนที่มีลิงก์สามารถดูได้"');
+                }
+            } catch (error) {
+                console.error('❌ การตรวจสอบล้มเหลว:', error);
+                alert('❌ การตรวจสอบล้มเหลว!\n\nตรวจสอบ console สำหรับรายละเอียดข้อผิดพลาด');
+            }
+        });
+
+        // Date range controls
+        document.getElementById('startDate').addEventListener('change', updateDateRangeDisplay);
+        document.getElementById('endDate').addEventListener('change', updateDateRangeDisplay);
+        
+        document.getElementById('filterBtn').addEventListener('click', function() {
+            const newStartDate = document.getElementById('startDate').value;
+            const newEndDate = document.getElementById('endDate').value;
+            
+            if (!newStartDate || !newEndDate) {
+                alert('กรุณาเลือกวันที่เริ่มต้นและสิ้นสุด');
+                return;
+            }
+            
+            if (newStartDate > newEndDate) {
+                alert('วันที่เริ่มต้นไม่สามารถมากกว่าวันที่สิ้นสุดได้');
+                return;
+            }
+            
+            console.log('อัปเดตช่วงวันที่จาก', currentStartDate, 'เป็น', newStartDate, '-', newEndDate);
+            
+            currentStartDate = newStartDate;
+            currentEndDate = newEndDate;
+            
+            // Calculate and display the number of days
+            const startDate = new Date(currentStartDate);
+            const endDate = new Date(currentEndDate);
+            const dayCount = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+            
+            console.log(`ช่วงที่เลือก: ${dayCount} วัน จาก ${currentStartDate} ถึง ${currentEndDate}`);
+            
+            // Update the dashboard with new range
+            updateDashboard();
+            
+            // Show success message for multi-day ranges
+            if (dayCount > 1) {
+                console.log(`แดชบอร์ดอัปเดตสำหรับ ${dayCount} วัน ตัวชี้วัดทั้งหมดถูกรวมในช่วงที่เลือกแล้ว`);
+            }
+        });
+
+        // Quick range dropdown
+        document.getElementById('quickRangeBtn').addEventListener('click', function() {
+            const menu = document.getElementById('quickRangeMenu');
+            menu.classList.toggle('hidden');
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(e) {
+            const menu = document.getElementById('quickRangeMenu');
+            const btn = document.getElementById('quickRangeBtn');
+            if (!menu.contains(e.target) && !btn.contains(e.target)) {
+                menu.classList.add('hidden');
+            }
+        });
+
+        // Quick range options
+        document.querySelectorAll('[data-range]').forEach(button => {
+            button.addEventListener('click', function() {
+                const range = this.dataset.range;
+                const today = new Date();
+                let startDate, endDate;
+
+                switch(range) {
+                    case 'today':
+                        startDate = endDate = new Date();
+                        break;
+                    case 'yesterday':
+                        startDate = endDate = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+                        break;
+                    case 'last7':
+                        startDate = new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000);
+                        endDate = new Date();
+                        break;
+                    case 'last30':
+                        startDate = new Date(today.getTime() - 29 * 24 * 60 * 60 * 1000);
+                        endDate = new Date();
+                        break;
+                    case 'thisMonth':
+                        startDate = new Date(today.getFullYear(), today.getMonth(), 1);
+                        endDate = new Date();
+                        break;
+                    case 'lastMonth':
+                        startDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+                        endDate = new Date(today.getFullYear(), today.getMonth(), 0);
+                        break;
+                    case 'thisYear':
+                        startDate = new Date(today.getFullYear(), 0, 1);
+                        endDate = new Date();
+                        break;
+                }
+
+                document.getElementById('startDate').value = startDate.toISOString().split('T')[0];
+                document.getElementById('endDate').value = endDate.toISOString().split('T')[0];
+                updateDateRangeDisplay();
+                document.getElementById('quickRangeMenu').classList.add('hidden');
+            });
+        });
+
+        // Google Sheets Functions
+        async function connectToSheet(sheetId) {
+            try {
+                updateConnectionStatus('loading', 'กำลังเชื่อมต่อกับ Google Sheets...');
+                const connectBtn = document.getElementById('connectBtn');
+                const spinner = connectBtn.querySelector('.loading-spinner');
+                
+                connectBtn.disabled = true;
+                spinner.classList.remove('hidden');
+                
+                currentSheetId = sheetId;
+                localStorage.setItem('multiProductSheetId', sheetId);
+                
+                await loadAllProductData(sheetId);
+                
+                updateConnectionStatus('connected', 'เชื่อมต่อกับ Google Sheets แล้ว');
+                enableButtons();
+                document.getElementById('setupInstructions').style.display = 'none';
+                document.getElementById('connectionError').classList.add('hidden');
+                
+            } catch (error) {
+                console.error('การเชื่อมต่อล้มเหลว:', error);
+                updateConnectionStatus('disconnected', 'การเชื่อมต่อล้มเหลว - ใช้ข้อมูลทดลอง');
+                
+                // Show connection error in the UI
+                document.getElementById('connectionError').classList.remove('hidden');
+                
+                // Show detailed error message
+                const errorMsg = `การเชื่อมต่อล้มเหลว: ${error.message}\n\n` +
+                    `วิธีแก้ไข:\n` +
+                    `1. เปิด Google Sheet ของคุณ\n` +
+                    `2. คลิก "แชร์" → "เปลี่ยนเป็นทุกคนที่มีลิงก์"\n` +
+                    `3. ตั้งสิทธิ์เป็น "ผู้ดู"\n` +
+                    `4. คัดลอก Sheet ID จาก URL\n\n` +
+                    `ใช้ข้อมูลทดลองเพื่อให้คุณสามารถทดสอบแดชบอร์ดได้`;
+                
+                alert(errorMsg);
+                
+                // Load demo data so user can still use the dashboard
+                loadDemoData();
+                enableButtons();
+            } finally {
+                const connectBtn = document.getElementById('connectBtn');
+                const spinner = connectBtn.querySelector('.loading-spinner');
+                connectBtn.disabled = false;
+                spinner.classList.add('hidden');
+            }
+        }
+
+        async function loadAllProductData(sheetId) {
+            try {
+                console.log('พยายามโหลดข้อมูลจาก sheet:', sheetId);
+                
+                // Method 1: Try CSV export with no-cache headers
+                try {
+                    const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=0&cachebust=${Date.now()}`;
+                    console.log('ลองใช้วิธี CSV:', csvUrl);
+                    
+                    const response = await fetch(csvUrl, {
+                        method: 'GET',
+                        mode: 'cors',
+                        cache: 'no-cache',
+                        headers: {
+                            'Cache-Control': 'no-cache',
+                            'Pragma': 'no-cache'
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        const csvText = await response.text();
+                        console.log('ได้รับข้อมูล CSV แล้ว, ความยาว:', csvText.length);
+                        console.log('500 ตัวอักษรแรก:', csvText.substring(0, 500));
+                        
+                        if (csvText.length > 100 && !csvText.includes('<!DOCTYPE html')) {
+                            allDailyData = parseCSVData(csvText);
+                            
+                            if (allDailyData.length > 0) {
+                                productsData = {
+                                    'ข้อมูล Sheet ของคุณ': {
+                                        name: 'ข้อมูล Sheet ของคุณ',
+                                        dailyData: allDailyData,
+                                        totals: calculateTotals(allDailyData)
+                                    }
+                                };
+                                
+                                updateDashboard();
+                                document.getElementById('lastUpdated').textContent = `อัปเดตล่าสุด: ${new Date().toLocaleString('th-TH')}`;
+                                console.log('โหลดข้อมูลผ่าน CSV สำเร็จ');
+                                return;
+                            }
+                        }
+                    } else {
+                        console.log('การตอบกลับ CSV ไม่ OK:', response.status, response.statusText);
+                    }
+                } catch (csvError) {
+                    console.log('วิธี CSV ล้มเหลว:', csvError.message);
+                }
+                
+                // Method 2: Try JSON API with better error handling
+                try {
+                    const jsonUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&cachebust=${Date.now()}`;
+                    console.log('ลองใช้วิธี JSON:', jsonUrl);
+                    
+                    const response = await fetch(jsonUrl, {
+                        method: 'GET',
+                        mode: 'cors',
+                        cache: 'no-cache'
+                    });
+                    
+                    if (response.ok) {
+                        const text = await response.text();
+                        console.log('ได้รับการตอบกลับ JSON แล้ว, ความยาว:', text.length);
+                        
+                        if (text.includes('google.visualization.Query.setResponse')) {
+                            const jsonText = text.substring(47).slice(0, -2);
+                            const data = JSON.parse(jsonText);
+                            
+                            console.log('ข้อมูล JSON ที่แยกวิเคราะห์:', data);
+                            
+                            if (data.table && data.table.rows) {
+                                allDailyData = parseSheetData(data.table.rows, data.table.cols);
+                                
+                                if (allDailyData.length > 0) {
+                                    productsData = {
+                                        'ข้อมูล Sheet ของคุณ': {
+                                            name: 'ข้อมูล Sheet ของคุณ',
+                                            dailyData: allDailyData,
+                                            totals: calculateTotals(allDailyData)
+                                        }
+                                    };
+                                    
+                                    updateDashboard();
+                                    document.getElementById('lastUpdated').textContent = `อัปเดตล่าสุด: ${new Date().toLocaleString('th-TH')}`;
+                                    console.log('โหลดข้อมูลผ่าน JSON สำเร็จ');
+                                    return;
+                                }
+                            }
+                        }
+                    } else {
+                        console.log('การตอบกลับ JSON ไม่ OK:', response.status, response.statusText);
+                    }
+                } catch (jsonError) {
+                    console.log('วิธี JSON ล้มเหลว:', jsonError.message);
+                }
+                
+                // Method 3: Try direct sheet access with different parameters
+                try {
+                    const directUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tq=SELECT%20*&tqx=out:json&sheet=Sheet1`;
+                    console.log('ลองใช้วิธีตรง:', directUrl);
+                    
+                    const response = await fetch(directUrl, {
+                        method: 'GET',
+                        mode: 'cors'
+                    });
+                    
+                    if (response.ok) {
+                        const text = await response.text();
+                        if (text.includes('google.visualization.Query.setResponse')) {
+                            const jsonText = text.substring(47).slice(0, -2);
+                            const data = JSON.parse(jsonText);
+                            
+                            if (data.table && data.table.rows) {
+                                allDailyData = parseSheetData(data.table.rows, data.table.cols);
+                                
+                                if (allDailyData.length > 0) {
+                                    productsData = {
+                                        'ข้อมูล Sheet ของคุณ': {
+                                            name: 'ข้อมูล Sheet ของคุณ',
+                                            dailyData: allDailyData,
+                                            totals: calculateTotals(allDailyData)
+                                        }
+                                    };
+                                    
+                                    updateDashboard();
+                                    document.getElementById('lastUpdated').textContent = `อัปเดตล่าสุด: ${new Date().toLocaleString('th-TH')}`;
+                                    console.log('โหลดข้อมูลผ่านวิธีตรงสำเร็จ');
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                } catch (directError) {
+                    console.log('วิธีตรงล้มเหลว:', directError.message);
+                }
+                
+                // If all methods fail, throw error with specific guidance
+                throw new Error('ไม่สามารถเข้าถึง Google Sheet ของคุณได้ กรุณาตรวจสอบว่าได้แชร์สาธารณะด้วยสิทธิ์ "ทุกคนที่มีลิงก์สามารถดูได้"');
+                
+            } catch (error) {
+                console.error('วิธีการเชื่อมต่อทั้งหมดล้มเหลว:', error);
+                throw new Error(`การเชื่อมต่อล้มเหลว: ${error.message}`);
+            }
+        }
+
+        function parseCSVData(csvText) {
+            const lines = csvText.split('\n');
+            const dailyData = [];
+            
+            console.log('🔍 แยกวิเคราะห์ข้อมูล CSV - จำนวนแถวทั้งหมด:', lines.length);
+            console.log('📋 ตัวอย่าง 5 แถวแรก:');
+            for (let i = 0; i < Math.min(5, lines.length); i++) {
+                console.log(`แถว ${i}:`, lines[i].substring(0, 200) + '...');
+            }
+            
+            // Skip header rows and start from row 3 (index 2) - where daily data begins
+            for (let i = 2; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line) continue;
+                
+                // Parse CSV line (handle quoted values)
+                const values = parseCSVLine(line);
+                console.log(`📊 แถว ${i+1} - แยกวิเคราะห์ได้ ${values.length} คอลัมน์`);
+                
+                if (values.length < 15) {
+                    console.log(`⚠️ แถว ${i+1} ข้าม - คอลัมน์ไม่เพียงพอ (${values.length})`);
+                    continue;
+                }
+                
+                try {
+                    // EXACT COLUMN MAPPING based on your sheet structure:
+                    const dateStr = values[0]; // Column A: Date
+                    
+                    // Key metrics from specific columns:
+                    const orders = parseFloat(values[10]) || 0;        // Column K: Number of orders
+                    const items = parseFloat(values[11]) || 0;         // Column L: Number of items sold  
+                    const sales = parseFloat(values[12]) || 0;         // Column M: Total sales
+                    const adsCost = parseFloat(values[22]) || 0;       // Column W: Ads cost
+                    const avgAdsPerOrder = parseFloat(values[26]) || 0; // Column AA: Average Ads per order
+                    const vat = parseFloat(values[30]) || 0;           // Column AE: VAT to pay
+                    const profit = parseFloat(values[32]) || 0;        // Column AG: Actual profit/loss
+                    
+                    console.log(`📈 แถว ${i+1} ตัวชี้วัด:`, {
+                        date: dateStr,
+                        orders: orders,
+                        items: items, 
+                        sales: sales,
+                        adsCost: adsCost,
+                        avgAdsPerOrder: avgAdsPerOrder,
+                        vat: vat,
+                        profit: profit
+                    });
+                    
+                    // ENHANCED DATE PARSING - Handle multiple formats and convert to YYYY-MM-DD
+                    let formattedDate = null;
+                    if (dateStr && dateStr.trim()) {
+                        const cleanDate = dateStr.trim().replace(/"/g, '');
+                        console.log(`🗓️ ประมวลผลวันที่: "${cleanDate}"`);
+                        
+                        let parsedDate = null;
+                        
+                        // PRIMARY FORMAT: DD/MM/YYYY (your Google Sheet format)
+                        if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(cleanDate)) {
+                            const parts = cleanDate.split('/');
+                            const day = parseInt(parts[0], 10);
+                            const month = parseInt(parts[1], 10);
+                            const year = parseInt(parts[2], 10);
+                            
+                            console.log(`🔍 ตรวจสอบส่วนประกอบวันที่: วัน=${day}, เดือน=${month}, ปี=${year}`);
+                            
+                            // Validate date components - expanded year range for 2025
+                            if (day >= 1 && day <= 31 && month >= 1 && month <= 12 && year >= 2020 && year <= 2030) {
+                                parsedDate = new Date(year, month - 1, day);
+                                console.log(`🗓️ แยกวิเคราะห์ DD/MM/YYYY: ${cleanDate} → วัน=${day}, เดือน=${month}, ปี=${year} → ${parsedDate.toDateString()}`);
+                            } else {
+                                console.warn(`❌ ส่วนประกอบวันที่ไม่ถูกต้อง: วัน=${day}, เดือน=${month}, ปี=${year}`);
+                            }
+                        }
+                        
+                        // SECONDARY FORMAT: DD-MM-YYYY
+                        if (!parsedDate && /^\d{1,2}-\d{1,2}-\d{4}$/.test(cleanDate)) {
+                            const parts = cleanDate.split('-');
+                            const day = parseInt(parts[0], 10);
+                            const month = parseInt(parts[1], 10);
+                            const year = parseInt(parts[2], 10);
+                            
+                            if (day >= 1 && day <= 31 && month >= 1 && month <= 12 && year >= 2020 && year <= 2030) {
+                                parsedDate = new Date(year, month - 1, day);
+                                console.log(`🗓️ แยกวิเคราะห์ DD-MM-YYYY: ${cleanDate}`);
+                            }
+                        }
+                        
+                        // FALLBACK FORMAT: ISO format (YYYY-MM-DD)
+                        if (!parsedDate && /^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) {
+                            parsedDate = new Date(cleanDate + 'T12:00:00');
+                            console.log(`🗓️ แยกวิเคราะห์รูปแบบ ISO: ${cleanDate}`);
+                        }
+                        
+                        // FALLBACK: Try Excel date number format
+                        if (!parsedDate && /^\d+$/.test(cleanDate)) {
+                            const excelDate = parseInt(cleanDate, 10);
+                            if (excelDate > 40000 && excelDate < 50000) { // Reasonable range for 2009-2037
+                                parsedDate = new Date((excelDate - 25569) * 86400 * 1000);
+                                console.log(`🗓️ แยกวิเคราะห์ Excel date number: ${cleanDate}`);
+                            }
+                        }
+                        
+                        // Validate the parsed date and convert to YYYY-MM-DD format
+                        if (parsedDate && !isNaN(parsedDate.getTime()) && parsedDate.getFullYear() >= 2020 && parsedDate.getFullYear() <= 2030) {
+                            // Always convert to YYYY-MM-DD format for consistent comparison
+                            const year = parsedDate.getFullYear();
+                            const month = String(parsedDate.getMonth() + 1).padStart(2, '0');
+                            const day = String(parsedDate.getDate()).padStart(2, '0');
+                            formattedDate = `${year}-${month}-${day}`;
+                            
+                            console.log(`✅ แยกวิเคราะห์วันที่สำเร็จ: "${cleanDate}" → ${formattedDate} (${parsedDate.toDateString()})`);
+                        } else {
+                            console.warn(`❌ ไม่สามารถแยกวิเคราะห์วันที่: "${cleanDate}" - รูปแบบไม่ถูกต้องหรือนอกช่วงปี 2020-2030`);
+                            continue;
+                        }
+                    } else {
+                        console.warn(`❌ วันที่ว่างหรือไม่ถูกต้องในแถว ${i+1}`);
+                        continue;
+                    }
+                    
+                    // Enhanced data validation - include rows with ANY meaningful data
+                    const hasData = orders > 0 || items > 0 || sales > 0 || adsCost > 0 || vat > 0 || Math.abs(profit) > 0;
+                    
+                    if (formattedDate && hasData) {
+                        const dataPoint = {
+                            date: formattedDate, // Now always in YYYY-MM-DD format
+                            orders: orders,
+                            items: items,
+                            sales: sales,
+                            adsCost: adsCost,
+                            avgAdsPerOrder: avgAdsPerOrder,
+                            vat: vat,
+                            profit: profit
+                        };
+                        
+                        console.log(`✅ เพิ่มข้อมูลสำหรับ ${formattedDate}:`, dataPoint);
+                        dailyData.push(dataPoint);
+                    } else if (formattedDate) {
+                        console.log(`⚠️ แถว ${i+1} มีวันที่ถูกต้องแต่ไม่มีข้อมูลที่มีความหมาย - ข้าม`);
+                    }
+                } catch (parseError) {
+                    console.warn('ข้อผิดพลาดในการแยกวิเคราะห์แถว CSV:', i, parseError);
+                }
+            }
+            
+            console.log(`🎯 การแยกวิเคราะห์เสร็จสิ้น - พบรายการข้อมูลรายวันที่ถูกต้อง ${dailyData.length} รายการ`);
+            
+            if (dailyData.length === 0) {
+                console.error('❌ ไม่พบข้อมูลที่ถูกต้องใน CSV');
+                console.log('🔧 เคล็ดลับการแก้ไขปัญหา:');
+                console.log('1. ตรวจสอบว่า sheet ของคุณมีข้อมูลเริ่มจากแถว 3');
+                console.log('2. ตรวจสอบคอลัมน์ K, L, M, W, AA, AE, AG มีค่าตัวเลข');
+                console.log('3. ตรวจสอบคอลัมน์ A มีวันที่ในรูปแบบ DD/MM/YYYY หรือ DD-MM-YYYY');
+                console.log('4. ตรวจสอบว่า sheet ถูกแชร์เป็น "ทุกคนที่มีลิงก์สามารถดูได้"');
+                return [];
+            }
+            
+            // Sort by date and show summary
+            const sortedData = dailyData.sort((a, b) => new Date(a.date) - new Date(b.date));
+            console.log(`📊 สรุปข้อมูล: ${sortedData.length} วัน จาก ${sortedData[0]?.date} ถึง ${sortedData[sortedData.length-1]?.date}`);
+            
+            return sortedData;
+        }
+
+        function parseCSVLine(line) {
+            const values = [];
+            let current = '';
+            let inQuotes = false;
+            
+            for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                
+                if (char === '"') {
+                    inQuotes = !inQuotes;
+                } else if (char === ',' && !inQuotes) {
+                    values.push(current.trim());
+                    current = '';
+                } else {
+                    current += char;
+                }
+            }
+            
+            values.push(current.trim());
+            return values;
+        }
+
+        function loadDemoData() {
+            console.log('🔄 โหลดข้อมูลทดลองสำหรับการทดสอบ');
+            console.log(`🗓️ ช่วงวันที่ปัจจุบัน: ${currentStartDate} ถึง ${currentEndDate}`);
+            
+            const productAData = generateSampleData('สินค้า A');
+            const productBData = generateSampleData('สินค้า B');
+            
+            console.log('📊 สร้างข้อมูลสินค้า A:', productAData.length, 'วัน');
+            console.log('📊 สร้างข้อมูลสินค้า B:', productBData.length, 'วัน');
+            
+            // Show date ranges for debugging
+            if (productAData.length > 0) {
+                console.log(`📅 ช่วงวันที่สินค้า A: ${productAData[0].date} ถึง ${productAData[productAData.length-1].date}`);
+            }
+            if (productBData.length > 0) {
+                console.log(`📅 ช่วงวันที่สินค้า B: ${productBData[0].date} ถึง ${productBData[productBData.length-1].date}`);
+            }
+            
+            productsData = {
+                'สินค้า A': {
+                    name: 'สินค้า A',
+                    dailyData: productAData,
+                    totals: calculateTotals(productAData)
+                },
+                'สินค้า B': {
+                    name: 'สินค้า B', 
+                    dailyData: productBData,
+                    totals: calculateTotals(productBData)
+                }
+            };
+            
+            // Store all daily data for filtering
+            allDailyData = [...productAData, ...productBData];
+            
+            console.log('✅ โหลดข้อมูลทดลองสำเร็จ');
+            console.log('📈 สินค้า:', Object.keys(productsData));
+            console.log('📊 รายการข้อมูลรายวันทั้งหมด:', allDailyData.length);
+            
+            // Update connection status
+            updateConnectionStatus('connected', 'โหลดข้อมูลทดลองแล้ว');
+            enableButtons();
+            
+            // Update dashboard immediately with current date range
+            console.log('🔄 อัปเดตแดชบอร์ดด้วยข้อมูลทดลอง...');
+            updateDashboard();
+            document.getElementById('lastUpdated').textContent = `อัปเดตล่าสุด: ${new Date().toLocaleString('th-TH')} (ข้อมูลทดลอง)`;
+        }
+
+        function generateSampleData(productName) {
+            const baseMultiplier = productName === 'สินค้า A' ? 1.5 : productName === 'สินค้า B' ? 1.2 : 0.8;
+            const data = [];
+            
+            // Generate data for the current month to match default date range
+            const today = new Date();
+            const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+            const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+            
+            console.log(`🔄 สร้างข้อมูลตัวอย่างสำหรับ ${productName} สำหรับเดือนปัจจุบัน`);
+            console.log(`🗓️ ช่วงวันที่: ${startOfMonth.toDateString()} ถึง ${endOfMonth.toDateString()}`);
+            
+            // Generate data for each day of the current month
+            const currentDate = new Date(startOfMonth);
+            while (currentDate <= endOfMonth) {
+                const dateStr = currentDate.toISOString().split('T')[0];
+                
+                // Generate realistic sample data
+                const orders = Math.floor((15 + Math.random() * 25) * baseMultiplier);
+                const items = Math.floor(orders * (1.1 + Math.random() * 0.7));
+                const sales = Math.floor((orders * 380 + Math.random() * 4000) * baseMultiplier);
+                const adsCost = Math.floor((orders * 22 + Math.random() * 800) * baseMultiplier);
+                const vat = Math.floor(sales * 0.07);
+                const profit = Math.floor(sales * 0.28 - adsCost - vat);
+                
+                console.log(`📅 สร้างข้อมูลสำหรับ ${dateStr}: ${orders} ออเดอร์, ${sales} บาท ยอดขาย`);
+                
+                data.push({
+                    date: dateStr,
+                    orders: orders,
+                    items: items,
+                    sales: sales,
+                    adsCost: adsCost,
+                    avgAdsPerOrder: Math.round(adsCost / orders),
+                    vat: vat,
+                    profit: profit
+                });
+                
+                currentDate.setDate(currentDate.getDate() + 1);
+            }
+            
+            console.log(`✅ สร้างข้อมูล ${data.length} วัน จาก ${data[0]?.date} ถึง ${data[data.length-1]?.date}`);
+            return data;
+        }
+
+        function parseSheetData(rows, cols) {
+            const dailyData = [];
+            
+            // Parse data starting from row 3 (index 2)
+            for (let i = 2; i < rows.length; i++) { // Start from row 3 (index 2)
+                const row = rows[i];
+                if (!row.c || !row.c[0] || !row.c[0].v) continue; // Skip empty rows
+                
+                try {
+                    // Map to your exact sheet structure
+                    const date = row.c[0] ? (row.c[0].f || row.c[0].v) : null; // A3: Date
+                    const orders = row.c[10] ? (row.c[10].v || 0) : 0; // K3: Number of orders
+                    const items = row.c[11] ? (row.c[11].v || 0) : 0; // L3: Number of items sold
+                    const sales = row.c[12] ? (row.c[12].v || 0) : 0; // M3: Total sales
+                    const adsCost = row.c[22] ? (row.c[22].v || 0) : 0; // W3: Ads cost
+                    const avgAdsPerOrder = row.c[26] ? (row.c[26].v || 0) : 0; // AA3: Average Ads per order
+                    const vatToPay = row.c[30] ? (row.c[30].v || 0) : 0; // AE3: VAT to pay
+                    const profit = row.c[32] ? (row.c[32].v || 0) : 0; // AG3: Actual profit/loss
+                    
+                    // Convert date if it's a number (Excel date format)
+                    let formattedDate = date;
+                    if (typeof date === 'number') {
+                        const excelDate = new Date((date - 25569) * 86400 * 1000);
+                        formattedDate = excelDate.toISOString().split('T')[0];
+                    } else if (typeof date === 'string') {
+                        // Try to parse the date string
+                        const parsedDate = new Date(date);
+                        if (!isNaN(parsedDate.getTime())) {
+                            formattedDate = parsedDate.toISOString().split('T')[0];
+                        }
+                    }
+                    
+                    dailyData.push({
+                        date: formattedDate,
+                        orders: Number(orders) || 0,
+                        items: Number(items) || 0,
+                        sales: Number(sales) || 0,
+                        adsCost: Number(adsCost) || 0,
+                        avgAdsPerOrder: Number(avgAdsPerOrder) || 0,
+                        vat: Number(vatToPay) || 0,
+                        profit: Number(profit) || 0
+                    });
+                } catch (error) {
+                    console.warn('ข้อผิดพลาดในการแยกวิเคราะห์แถว:', i, error);
+                }
+            }
+            
+            // If no data found, generate sample data
+            if (dailyData.length === 0) {
+                return generateSampleData('สินค้าหลัก');
+            }
+            
+            // Sort by date and return all data (not just last 7 days)
+            return dailyData.sort((a, b) => new Date(a.date) - new Date(b.date));
+        }
+
+        function calculateTotals(dailyData) {
+            return dailyData.reduce((acc, day) => {
+                acc.orders += day.orders;
+                acc.items += day.items;
+                acc.sales += day.sales;
+                acc.adsCost += day.adsCost;
+                acc.vat += day.vat;
+                acc.profit += day.profit;
+                return acc;
+            }, { orders: 0, items: 0, sales: 0, adsCost: 0, vat: 0, profit: 0 });
+        }
+
+        function addNewProduct(productName) {
+            if (productsData[productName]) {
+                alert('สินค้านี้มีอยู่แล้ว');
+                return;
+            }
+            
+            productsData[productName] = {
+                name: productName,
+                dailyData: generateSampleData(productName),
+                totals: calculateTotals(generateSampleData(productName))
+            };
+            
+            updateDashboard();
+            alert(`เพิ่มสินค้า "${productName}" สำเร็จ! ในการใช้งานจริง จะสร้าง sheet ใหม่ใน Google Sheets ของคุณ`);
+        }
+
+        function updateConnectionStatus(status, text) {
+            const statusIndicator = document.getElementById('connectionStatus');
+            const connectionText = document.getElementById('connectionText');
+            
+            statusIndicator.className = `status-indicator status-${status}`;
+            connectionText.textContent = text;
+            
+            isConnected = status === 'connected';
+        }
+
+        function enableButtons() {
+            document.getElementById('refreshBtn').disabled = false;
+            document.getElementById('diagnosticBtn').disabled = false;
+            document.getElementById('addProductBtn').disabled = false;
+            document.getElementById('exportBtn').disabled = false;
+            document.getElementById('filterBtn').disabled = false;
+            document.getElementById('quickRangeBtn').disabled = false;
+        }
+
+        function updateDateRangeDisplay() {
+            const startDate = document.getElementById('startDate').value;
+            const endDate = document.getElementById('endDate').value;
+            
+            if (startDate && endDate) {
+                const start = new Date(startDate);
+                const end = new Date(endDate);
+                const daysDiff = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+                
+                document.getElementById('selectedDaysCount').textContent = `เลือก ${daysDiff} วัน`;
+                
+                if (startDate === endDate) {
+                    const thaiDate = formatDateThai(startDate);
+                    document.getElementById('dateRangeDisplay').textContent = thaiDate;
+                    document.getElementById('summaryPeriod').textContent = thaiDate;
+                } else {
+                    const startThai = formatDateThai(startDate);
+                    const endThai = formatDateThai(endDate);
+                    document.getElementById('dateRangeDisplay').textContent = `${startThai} - ${endThai}`;
+                    document.getElementById('summaryPeriod').textContent = `${startThai} - ${endThai}`;
+                }
+                
+                document.getElementById('trendChartPeriod').textContent = `(${daysDiff} วัน)`;
+            }
+        }
+
+        function getDataInRange(dailyData, startDate, endDate) {
+            console.log(`🔍 กรองข้อมูล: ${startDate} ถึง ${endDate}`);
+            console.log(`📊 ข้อมูลที่ป้อน: ${dailyData.length} วันทั้งหมดที่มี`);
+            
+            if (!dailyData || dailyData.length === 0) {
+                console.warn('❌ ไม่มีข้อมูลรายวันสำหรับการกรอง');
+                return [];
+            }
+            
+            // Show ALL available dates for debugging
+            console.log('📅 วันที่ทั้งหมดที่มีในข้อมูล:');
+            dailyData.forEach((day, index) => {
+                console.log(`  ${index + 1}. ${day.date} (ออเดอร์: ${day.orders}, ยอดขาย: ${day.sales})`);
+            });
+            
+            console.log(`🎯 กำลังมองหาวันที่ระหว่าง ${startDate} และ ${endDate}`);
+            console.log(`📝 รูปแบบวันที่ในข้อมูล: ${dailyData[0]?.date} (ตัวอย่าง)`);
+            
+            // Convert filter dates to Date objects for proper comparison
+            const filterStartDate = new Date(startDate + 'T00:00:00');
+            const filterEndDate = new Date(endDate + 'T23:59:59');
+            
+            console.log(`📅 ช่วงการกรอง: ${filterStartDate.toDateString()} ถึง ${filterEndDate.toDateString()}`);
+            
+            const filteredData = dailyData.filter(day => {
+                if (!day.date) {
+                    console.warn('⚠️ ข้ามวันที่ไม่มีวันที่:', day);
+                    return false;
+                }
+                
+                // Convert day.date to Date object for comparison
+                let dayDate = null;
+                
+                // Handle YYYY-MM-DD format (already converted in parseCSVData)
+                if (/^\d{4}-\d{2}-\d{2}$/.test(day.date)) {
+                    dayDate = new Date(day.date + 'T12:00:00');
+                }
+                // Handle DD/MM/YYYY format (if somehow still in original format)
+                else if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(day.date)) {
+                    const parts = day.date.split('/');
+                    const dayNum = parseInt(parts[0], 10);
+                    const month = parseInt(parts[1], 10);
+                    const year = parseInt(parts[2], 10);
+                    dayDate = new Date(year, month - 1, dayNum, 12, 0, 0);
+                }
+                
+                if (!dayDate || isNaN(dayDate.getTime())) {
+                    console.warn(`⚠️ ไม่สามารถแยกวิเคราะห์วันที่: ${day.date}`);
+                    return false;
+                }
+                
+                // Check if day falls within the range
+                const isInRange = dayDate >= filterStartDate && dayDate <= filterEndDate;
+                
+                if (isInRange) {
+                    console.log(`✅ รวม ${day.date} (${dayDate.toDateString()}):`, {
+                        orders: day.orders || 0,
+                        items: day.items || 0,
+                        sales: day.sales || 0,
+                        adsCost: day.adsCost || 0,
+                        avgAdsPerOrder: day.avgAdsPerOrder || 0,
+                        vat: day.vat || 0,
+                        profit: day.profit || 0
+                    });
+                } else {
+                    console.log(`❌ ข้าม ${day.date} (${dayDate.toDateString()}) - นอกช่วง`);
+                }
+                
+                return isInRange;
+            });
+            
+            console.log(`🎯 ผลการกรอง: ${filteredData.length} วัน จาก ${dailyData.length} วันทั้งหมด`);
+            
+            if (filteredData.length === 0) {
+                console.warn('⚠️ ไม่พบข้อมูลในช่วงที่เลือก');
+                console.warn('📋 วันที่ที่มีในข้อมูล:');
+                dailyData.forEach(day => {
+                    let displayDate = day.date;
+                    if (/^\d{4}-\d{2}-\d{2}$/.test(day.date)) {
+                        const date = new Date(day.date + 'T12:00:00');
+                        displayDate = `${day.date} (${date.toDateString()})`;
+                    }
+                    console.warn(`  - ${displayDate}`);
+                });
+                console.warn(`🔍 กำลังมองหาวันที่ระหว่าง ${filterStartDate.toDateString()} และ ${filterEndDate.toDateString()}`);
+            }
+            
+            return filteredData;
+        }
+
+        function aggregateRangeData(rangeData) {
+            console.log(`📊 รวมข้อมูล ${rangeData.length} วัน`);
+            
+            if (!rangeData || rangeData.length === 0) {
+                console.warn('❌ ไม่มีข้อมูลให้รวม');
+                return { orders: 0, items: 0, sales: 0, adsCost: 0, avgAdsPerOrder: 0, vat: 0, profit: 0 };
+            }
+            
+            const totals = rangeData.reduce((acc, day, index) => {
+                const dayOrders = Number(day.orders) || 0;
+                const dayItems = Number(day.items) || 0;
+                const daySales = Number(day.sales) || 0;
+                const dayAdsCost = Number(day.adsCost) || 0;
+                const dayVat = Number(day.vat) || 0;
+                const dayProfit = Number(day.profit) || 0;
+                
+                console.log(`  วันที่ ${index + 1} (${day.date}): ออเดอร์=${dayOrders}, ชิ้นสินค้า=${dayItems}, ยอดขาย=${daySales}, โฆษณา=${dayAdsCost}, VAT=${dayVat}, กำไร=${dayProfit}`);
+                
+                acc.orders += dayOrders;
+                acc.items += dayItems;
+                acc.sales += daySales;
+                acc.adsCost += dayAdsCost;
+                acc.vat += dayVat;
+                acc.profit += dayProfit;
+                
+                return acc;
+            }, { orders: 0, items: 0, sales: 0, adsCost: 0, vat: 0, profit: 0 });
+            
+            // Calculate average ads per order for the aggregated data
+            totals.avgAdsPerOrder = totals.orders > 0 ? Math.round(totals.adsCost / totals.orders) : 0;
+            
+            console.log(`🎯 ผลการรวม:`, {
+                orders: totals.orders,
+                items: totals.items,
+                sales: totals.sales,
+                adsCost: totals.adsCost,
+                avgAdsPerOrder: totals.avgAdsPerOrder,
+                vat: totals.vat,
+                profit: totals.profit
+            });
+            
+            return totals;
+        }
+
+        function updateDashboard() {
+            console.log('🔄 เริ่มอัปเดตแดชบอร์ด');
+            console.log('📊 ข้อมูลสินค้าที่มี:', !!productsData);
+            console.log('📊 จำนวนสินค้า:', Object.keys(productsData || {}).length);
+            
+            try {
+                console.log('1️⃣ อัปเดตสรุปภาพรวม...');
+                updateOverallSummary();
+                
+                console.log('2️⃣ อัปเดตรายละเอียดรายวัน...');
+                updateDailyBreakdown();
+                
+                console.log('3️⃣ อัปเดตการ์ดสินค้า...');
+                updateProductCards();
+                
+                console.log('4️⃣ อัปเดตกราฟ...');
+                updateCharts();
+                
+                console.log('5️⃣ อัปเดตตารางสินค้า...');
+                updateProductTable();
+                
+                console.log('✅ อัปเดตแดชบอร์ดเสร็จสิ้น');
+            } catch (error) {
+                console.error('❌ ข้อผิดพลาดระหว่างอัปเดตแดชบอร์ด:', error);
+                console.error('Stack trace:', error.stack);
+            }
+        }
+
+        function updateOverallSummary() {
+            console.log('🔄 อัปเดตสรุปภาพรวม');
+            console.log(`📅 ช่วงวันที่: ${currentStartDate} ถึง ${currentEndDate}`);
+            
+            // Validate that we have data to work with
+            if (!productsData || Object.keys(productsData).length === 0) {
+                console.warn('❌ ไม่มีข้อมูลสินค้า - ตั้งค่าเป็นศูนย์');
+                setZeroValues();
+                return;
+            }
+            
+            console.log('📊 สินค้าที่มี:', Object.keys(productsData));
+            
+            // Get all daily data from all products within the selected range
+            let allRangeData = [];
+            let totalDaysFound = 0;
+            
+            Object.values(productsData).forEach(product => {
+                console.log(`🔍 ประมวลผลสินค้า: ${product.name}`);
+                console.log(`📊 สินค้ามีข้อมูล ${product.dailyData?.length || 0} วันทั้งหมด`);
+                
+                if (!product.dailyData || product.dailyData.length === 0) {
+                    console.warn(`⚠️ ไม่มีข้อมูลรายวันสำหรับสินค้า ${product.name}`);
+                    return;
+                }
+                
+                // Show sample of product data
+                if (product.dailyData.length > 0) {
+                    console.log(`📈 ตัวอย่างข้อมูลจาก ${product.name}:`, product.dailyData[0]);
+                }
+                
+                const rangeData = getDataInRange(product.dailyData, currentStartDate, currentEndDate);
+                console.log(`✅ สินค้า ${product.name}: ${rangeData.length} วันในช่วงที่เลือก`);
+                
+                totalDaysFound += rangeData.length;
+                allRangeData = allRangeData.concat(rangeData);
+            });
+            
+            console.log(`📊 จุดข้อมูลทั้งหมด: ${allRangeData.length} จาก ${totalDaysFound} วัน`);
+            
+            if (allRangeData.length === 0) {
+                console.warn('❌ ไม่พบข้อมูลในช่วงที่เลือก - แสดงศูนย์');
+                setZeroValues();
+                return;
+            }
+            
+            // Use the improved aggregation function
+            const overallTotals = aggregateRangeData(allRangeData);
+            
+            console.log('🎯 ยอดรวมสุดท้าย:', overallTotals);
+            
+            // Update display with proper formatting and validation
+            try {
+                document.getElementById('totalOrders').textContent = (overallTotals.orders || 0).toLocaleString('th-TH');
+                document.getElementById('totalItems').textContent = (overallTotals.items || 0).toLocaleString('th-TH');
+                document.getElementById('totalSales').textContent = (overallTotals.sales || 0).toLocaleString('th-TH') + ' บาท';
+                document.getElementById('totalAds').textContent = (overallTotals.adsCost || 0).toLocaleString('th-TH') + ' บาท';
+                document.getElementById('avgAdsPerOrder').textContent = (overallTotals.avgAdsPerOrder || 0).toLocaleString('th-TH') + ' บาท';
+                document.getElementById('totalVAT').textContent = (overallTotals.vat || 0).toLocaleString('th-TH') + ' บาท';
+                document.getElementById('totalProfit').textContent = (overallTotals.profit || 0).toLocaleString('th-TH') + ' บาท';
+
+                // Update profit card styling based on profit/loss
+                const profitCard = document.getElementById('totalProfitCard');
+                const profitElement = document.getElementById('totalProfit');
+                
+                if ((overallTotals.profit || 0) >= 0) {
+                    profitCard.className = 'rounded-lg p-4 card-shadow text-center bg-green-100 border-l-4 border-green-500';
+                    profitElement.className = 'text-xl font-bold text-green-600';
+                } else {
+                    profitCard.className = 'rounded-lg p-4 card-shadow text-center bg-red-100 border-l-4 border-red-500';
+                    profitElement.className = 'text-xl font-bold text-red-600';
+                }
+
+                // Update product count and date range info
+                document.getElementById('productCount').textContent = Object.keys(productsData).length;
+                
+                // Update period display with day count
+                const startDate = new Date(currentStartDate);
+                const endDate = new Date(currentEndDate);
+                const dayCount = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+                
+                if (dayCount === 1) {
+                    document.getElementById('summaryPeriod').textContent = formatDateThai(currentStartDate);
+                } else {
+                    document.getElementById('summaryPeriod').textContent = 
+                        `${formatDateThai(currentStartDate)} - ${formatDateThai(currentEndDate)} (${dayCount} วัน)`;
+                }
+                
+                console.log('✅ อัปเดตสรุปเสร็จสิ้น');
+                console.log(`📈 แสดง: ${overallTotals.orders} ออเดอร์, ${overallTotals.sales} บาท ยอดขาย, ${overallTotals.profit} บาท กำไร`);
+            } catch (error) {
+                console.error('❌ ข้อผิดพลาดในการอัปเดตการแสดงสรุป:', error);
+                setZeroValues();
+            }
+        }
+
+        function setZeroValues() {
+            console.log('🔄 ตั้งค่าศูนย์สำหรับตัวชี้วัดทั้งหมด');
+            try {
+                document.getElementById('totalOrders').textContent = '0';
+                document.getElementById('totalItems').textContent = '0';
+                document.getElementById('totalSales').textContent = '0 บาท';
+                document.getElementById('totalAds').textContent = '0 บาท';
+                document.getElementById('avgAdsPerOrder').textContent = '0 บาท';
+                document.getElementById('totalVAT').textContent = '0 บาท';
+                document.getElementById('totalProfit').textContent = '0 บาท';
+                
+                const profitCard = document.getElementById('totalProfitCard');
+                profitCard.className = 'rounded-lg p-4 card-shadow text-center bg-gray-100';
+                
+                document.getElementById('productCount').textContent = '0';
+                document.getElementById('summaryPeriod').textContent = 'ไม่มีข้อมูล';
+            } catch (error) {
+                console.error('❌ ข้อผิดพลาดในการตั้งค่าศูนย์:', error);
+            }
+        }
+
+        function updateDailyBreakdown() {
+            console.log('🔄 อัปเดตตารางรายละเอียดรายวัน');
+            console.log(`📅 ช่วง: ${currentStartDate} ถึง ${currentEndDate}`);
+            
+            const tableBody = document.getElementById('dailyBreakdownTable');
+            const tableFooter = document.getElementById('dailyBreakdownFooter');
+            
+            // Validate data availability
+            if (!productsData || Object.keys(productsData).length === 0) {
+                console.warn('❌ ไม่มีข้อมูลสินค้าสำหรับรายละเอียด');
+                tableBody.innerHTML = `
+                    <tr>
+                        <td colspan="8" class="text-center py-8 text-gray-500">
+                            ไม่มีสินค้าที่เชื่อมต่อ
+                        </td>
+                    </tr>
+                `;
+                tableFooter.classList.add('hidden');
+                document.getElementById('dailyBreakdownCount').textContent = '0';
+                return;
+            }
+            
+            // Get all data in the selected range from all products
+            let allRangeData = [];
+            Object.values(productsData).forEach(product => {
+                const rangeData = getDataInRange(product.dailyData, currentStartDate, currentEndDate);
+                console.log(`📊 สินค้า ${product.name}: ${rangeData.length} วันในช่วงรายละเอียด`);
+                allRangeData = allRangeData.concat(rangeData);
+            });
+            
+            console.log(`📊 รวมรายละเอียด: ${allRangeData.length} จุดข้อมูล`);
+            
+            if (allRangeData.length === 0) {
+                console.warn('❌ ไม่มีข้อมูลในช่วงที่เลือกสำหรับรายละเอียด');
+                tableBody.innerHTML = `
+                    <tr>
+                        <td colspan="8" class="text-center py-8 text-gray-500">
+                            ไม่มีข้อมูลสำหรับช่วงวันที่ที่เลือก
+                        </td>
+                    </tr>
+                `;
+                tableFooter.classList.add('hidden');
+                document.getElementById('dailyBreakdownCount').textContent = '0';
+                return;
+            }
+            
+            // Group by date and aggregate across all products for each day
+            const dailyTotals = {};
+            allRangeData.forEach(day => {
+                const dateKey = day.date.split('T')[0]; // Normalize date key
+                
+                if (!dailyTotals[dateKey]) {
+                    dailyTotals[dateKey] = {
+                        date: dateKey,
+                        orders: 0,
+                        items: 0,
+                        sales: 0,
+                        adsCost: 0,
+                        vat: 0,
+                        profit: 0
+                    };
+                }
+                
+                // Safely add values with proper number conversion
+                dailyTotals[dateKey].orders += Number(day.orders) || 0;
+                dailyTotals[dateKey].items += Number(day.items) || 0;
+                dailyTotals[dateKey].sales += Number(day.sales) || 0;
+                dailyTotals[dateKey].adsCost += Number(day.adsCost) || 0;
+                dailyTotals[dateKey].vat += Number(day.vat) || 0;
+                dailyTotals[dateKey].profit += Number(day.profit) || 0;
+                
+                console.log(`📈 เพิ่มใน ${dateKey}: ออเดอร์=${day.orders}, ยอดขาย=${day.sales}, กำไร=${day.profit}`);
+            });
+            
+            const sortedDays = Object.values(dailyTotals).sort((a, b) => new Date(a.date) - new Date(b.date));
+            console.log(`📊 ผลรายละเอียด: ${sortedDays.length} วันที่ไม่ซ้ำ`);
+            
+            // Update table body with daily breakdown
+            tableBody.innerHTML = sortedDays.map(day => {
+                const avgAdsPerOrder = day.orders > 0 ? Math.round(day.adsCost / day.orders) : 0;
+                console.log(`📋 แถวสำหรับ ${day.date}: ${day.orders} ออเดอร์, ${day.sales} ยอดขาย, ${day.profit} กำไร`);
+                
+                return `
+                    <tr class="border-b hover:bg-gray-50">
+                        <td class="py-2 font-medium">${formatDateThai(day.date)}</td>
+                        <td class="text-right py-2">${day.orders.toLocaleString('th-TH')}</td>
+                        <td class="text-right py-2">${day.items.toLocaleString('th-TH')}</td>
+                        <td class="text-right py-2">${day.sales.toLocaleString('th-TH')}</td>
+                        <td class="text-right py-2">${day.adsCost.toLocaleString('th-TH')}</td>
+                        <td class="text-right py-2">${avgAdsPerOrder.toLocaleString('th-TH')}</td>
+                        <td class="text-right py-2">${day.vat.toLocaleString('th-TH')}</td>
+                        <td class="text-right py-2 font-semibold ${day.profit >= 0 ? 'text-green-600' : 'text-red-600'}">
+                            ${day.profit.toLocaleString('th-TH')}
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+            
+            // Calculate and update footer totals (sum of all days)
+            const totals = sortedDays.reduce((acc, day) => {
+                acc.orders += day.orders;
+                acc.items += day.items;
+                acc.sales += day.sales;
+                acc.adsCost += day.adsCost;
+                acc.vat += day.vat;
+                acc.profit += day.profit;
+                return acc;
+            }, { orders: 0, items: 0, sales: 0, adsCost: 0, vat: 0, profit: 0 });
+            
+            const totalAvgAdsPerOrder = totals.orders > 0 ? Math.round(totals.adsCost / totals.orders) : 0;
+            
+            console.log('🎯 ยอดรวมท้ายตารางรายละเอียด:', totals);
+            
+            document.getElementById('footerOrders').textContent = totals.orders.toLocaleString('th-TH');
+            document.getElementById('footerItems').textContent = totals.items.toLocaleString('th-TH');
+            document.getElementById('footerSales').textContent = totals.sales.toLocaleString('th-TH');
+            document.getElementById('footerAds').textContent = totals.adsCost.toLocaleString('th-TH');
+            document.getElementById('footerAvgPerOrder').textContent = totalAvgAdsPerOrder.toLocaleString('th-TH');
+            document.getElementById('footerVAT').textContent = totals.vat.toLocaleString('th-TH');
+            document.getElementById('footerProfit').textContent = totals.profit.toLocaleString('th-TH');
+            document.getElementById('footerProfit').className = `text-right py-3 font-semibold ${totals.profit >= 0 ? 'text-green-600' : 'text-red-600'}`;
+            
+            tableFooter.classList.remove('hidden');
+            document.getElementById('dailyBreakdownCount').textContent = sortedDays.length;
+            
+            console.log('✅ รายละเอียดรายวันเสร็จสิ้น');
+            console.log(`📊 แสดง ${sortedDays.length} วัน ด้วยยอดรวม: ${totals.orders} ออเดอร์, ${totals.sales} บาท ยอดขาย`);
+        }
+
+        function updateProductCards() {
+            const container = document.getElementById('productCards');
+            container.innerHTML = '';
+
+            Object.values(productsData).forEach(product => {
+                const rangeData = getDataInRange(product.dailyData, currentStartDate, currentEndDate);
+                const aggregated = aggregateRangeData(rangeData);
+                
+                const card = document.createElement('div');
+                card.className = 'product-card';
+                card.innerHTML = `
+                    <div class="flex justify-between items-start mb-4">
+                        <h3 class="text-xl font-bold">${product.name}</h3>
+                        <div class="text-sm opacity-75">${rangeData.length} วัน</div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                            <div class="opacity-75">ออเดอร์</div>
+                            <div class="text-lg font-bold">${aggregated.orders.toLocaleString('th-TH')}</div>
+                        </div>
+                        <div>
+                            <div class="opacity-75">ชิ้นสินค้า</div>
+                            <div class="text-lg font-bold">${aggregated.items.toLocaleString('th-TH')}</div>
+                        </div>
+                        <div>
+                            <div class="opacity-75">ยอดขาย</div>
+                            <div class="text-lg font-bold">${aggregated.sales.toLocaleString('th-TH')} บาท</div>
+                        </div>
+                        <div>
+                            <div class="opacity-75">กำไร</div>
+                            <div class="text-lg font-bold ${aggregated.profit >= 0 ? 'text-green-200' : 'text-red-200'}">
+                                ${aggregated.profit.toLocaleString('th-TH')} บาท
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-4 pt-4 border-t border-white border-opacity-20">
+                        <div class="flex justify-between text-sm">
+                            <span class="opacity-75">ค่าโฆษณา:</span>
+                            <span>${aggregated.adsCost.toLocaleString('th-TH')} บาท</span>
+                        </div>
+                        <div class="flex justify-between text-sm">
+                            <span class="opacity-75">เฉลี่ย/ออเดอร์:</span>
+                            <span>${Math.round(aggregated.adsCost / aggregated.orders || 0)} บาท</span>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function updateCharts() {
+            updateSalesTrendChart();
+            updateProductOrdersChart();
+            updateCostDistributionChart();
+            updateProfitByProductChart();
+        }
+
+        function updateSalesTrendChart() {
+            const ctx = document.getElementById('salesTrendChart').getContext('2d');
+            if (charts.salesTrend) charts.salesTrend.destroy();
+
+            console.log('อัปเดตกราฟแนวโน้มยอดขายสำหรับช่วง:', currentStartDate, 'ถึง', currentEndDate);
+
+            // Get range data for all products and aggregate by date
+            let allRangeData = [];
+            Object.values(productsData).forEach(product => {
+                const rangeData = getDataInRange(product.dailyData, currentStartDate, currentEndDate);
+                allRangeData = allRangeData.concat(rangeData);
+            });
+
+            // Group by date and aggregate across all products
+            const dailyTotals = {};
+            allRangeData.forEach(day => {
+                if (!dailyTotals[day.date]) {
+                    dailyTotals[day.date] = {
+                        date: day.date,
+                        orders: 0,
+                        sales: 0,
+                        adsCost: 0,
+                        profit: 0
+                    };
+                }
+                dailyTotals[day.date].orders += day.orders || 0;
+                dailyTotals[day.date].sales += day.sales || 0;
+                dailyTotals[day.date].adsCost += day.adsCost || 0;
+                dailyTotals[day.date].profit += day.profit || 0;
+            });
+
+            const sortedDays = Object.values(dailyTotals).sort((a, b) => new Date(a.date) - new Date(b.date));
+            console.log('จุดข้อมูลกราฟ:', sortedDays.length);
+            
+            if (sortedDays.length === 0) {
+                // Show empty chart message
+                charts.salesTrend = new Chart(ctx, {
+                    type: 'line',
+                    data: { labels: ['ไม่มีข้อมูล'], datasets: [] },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false },
+                            title: { display: true, text: 'ไม่มีข้อมูลสำหรับช่วงที่เลือก' }
+                        }
+                    }
+                });
+                return;
+            }
+
+            const dates = sortedDays.map(day => formatDateThai(day.date));
+
+            const datasets = [
+                {
+                    label: 'ยอดขาย (บาท)',
+                    data: sortedDays.map(day => day.sales),
+                    borderColor: '#3b82f6',
+                    backgroundColor: '#3b82f620',
+                    borderWidth: 3,
+                    fill: false,
+                    tension: 0.4,
+                    yAxisID: 'y'
+                },
+                {
+                    label: 'ออเดอร์',
+                    data: sortedDays.map(day => day.orders),
+                    borderColor: '#10b981',
+                    backgroundColor: '#10b98120',
+                    borderWidth: 2,
+                    fill: false,
+                    tension: 0.4,
+                    yAxisID: 'y1'
+                },
+                {
+                    label: 'กำไร (บาท)',
+                    data: sortedDays.map(day => day.profit),
+                    borderColor: '#f59e0b',
+                    backgroundColor: '#f59e0b20',
+                    borderWidth: 2,
+                    fill: false,
+                    tension: 0.4,
+                    yAxisID: 'y'
+                }
+            ];
+
+            charts.salesTrend = new Chart(ctx, {
+                type: 'line',
+                data: { 
+                    labels: dates,
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        }
+                    },
+                    scales: {
+                        x: {
+                            display: true,
+                            title: {
+                                display: true,
+                                text: 'วันที่'
+                            }
+                        },
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: {
+                                display: true,
+                                text: 'ยอดขาย/กำไร (บาท)'
+                            },
+                            ticks: {
+                                callback: function(value) {
+                                    return value.toLocaleString('th-TH') + ' บาท';
+                                }
+                            }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            title: {
+                                display: true,
+                                text: 'ออเดอร์'
+                            },
+                            grid: {
+                                drawOnChartArea: false,
+                            },
+                            ticks: {
+                                callback: function(value) {
+                                    return value.toLocaleString('th-TH');
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateProductOrdersChart() {
+            const ctx = document.getElementById('productOrdersChart').getContext('2d');
+            if (charts.productOrders) charts.productOrders.destroy();
+
+            const productNames = Object.keys(productsData);
+            const productOrdersData = productNames.map(name => {
+                const rangeData = getDataInRange(productsData[name].dailyData, currentStartDate, currentEndDate);
+                const aggregated = aggregateRangeData(rangeData);
+                return aggregated.orders;
+            });
+
+            const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#84cc16'];
+
+            charts.productOrders = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: productNames,
+                    datasets: [{
+                        data: productOrdersData,
+                        backgroundColor: colors.slice(0, productNames.length),
+                        borderWidth: 2,
+                        borderColor: '#ffffff'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                    const percentage = ((context.parsed / total) * 100).toFixed(1);
+                                    return `${context.label}: ${context.parsed.toLocaleString('th-TH')} ออเดอร์ (${percentage}%)`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateCostDistributionChart() {
+            const ctx = document.getElementById('costDistributionChart').getContext('2d');
+            if (charts.costDistribution) charts.costDistribution.destroy();
+
+            // Calculate total costs across all products in range
+            let totalAdsCost = 0;
+            let totalVAT = 0;
+            let totalProfit = 0;
+            let totalSales = 0;
+
+            Object.values(productsData).forEach(product => {
+                const rangeData = getDataInRange(product.dailyData, currentStartDate, currentEndDate);
+                const aggregated = aggregateRangeData(rangeData);
+                totalAdsCost += aggregated.adsCost;
+                totalVAT += aggregated.vat;
+                totalProfit += aggregated.profit;
+                totalSales += aggregated.sales;
+            });
+
+            const costOfGoods = totalSales - totalAdsCost - totalVAT - totalProfit;
+
+            charts.costDistribution = new Chart(ctx, {
+                type: 'pie',
+                data: {
+                    labels: ['ต้นทุนสินค้า', 'ค่าโฆษณา', 'VAT', 'กำไรสุทธิ'],
+                    datasets: [{
+                        data: [Math.max(0, costOfGoods), totalAdsCost, totalVAT, Math.max(0, totalProfit)],
+                        backgroundColor: ['#6b7280', '#f59e0b', '#ef4444', '#10b981'],
+                        borderWidth: 2,
+                        borderColor: '#ffffff'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                    const percentage = ((context.parsed / total) * 100).toFixed(1);
+                                    return `${context.label}: ${context.parsed.toLocaleString('th-TH')} บาท (${percentage}%)`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateProfitByProductChart() {
+            const ctx = document.getElementById('profitByProductChart').getContext('2d');
+            if (charts.profitByProduct) charts.profitByProduct.destroy();
+
+            const productNames = Object.keys(productsData);
+            const profitData = productNames.map(name => {
+                const rangeData = getDataInRange(productsData[name].dailyData, currentStartDate, currentEndDate);
+                const aggregated = aggregateRangeData(rangeData);
+                return aggregated.profit;
+            });
+
+            const colors = profitData.map(profit => profit >= 0 ? '#10b981' : '#ef4444');
+
+            charts.profitByProduct = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: productNames,
+                    datasets: [{
+                        label: 'กำไร (บาท)',
+                        data: profitData,
+                        backgroundColor: colors,
+                        borderColor: colors,
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'กำไร (บาท)'
+                            },
+                            ticks: {
+                                callback: function(value) {
+                                    return value.toLocaleString('th-TH') + ' บาท';
+                                }
+                            }
+                        },
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'สินค้า'
+                            }
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return `กำไร: ${context.parsed.y.toLocaleString('th-TH')} บาท`;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateProductTable() {
+            const tableBody = document.getElementById('productTable');
+            
+            if (Object.keys(productsData).length === 0) {
+                tableBody.innerHTML = `
+                    <tr>
+                        <td colspan="8" class="text-center py-8 text-gray-500">
+                            เชื่อมต่อกับ Google Sheets เพื่อดูข้อมูลสินค้า
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            tableBody.innerHTML = Object.values(productsData).map(product => {
+                const rangeData = getDataInRange(product.dailyData, currentStartDate, currentEndDate);
+                const aggregated = aggregateRangeData(rangeData);
+                
+                return `
+                    <tr class="border-b hover:bg-gray-50">
+                        <td class="py-3 font-medium">${product.name}</td>
+                        <td class="text-right py-3">${aggregated.orders.toLocaleString('th-TH')}</td>
+                        <td class="text-right py-3">${aggregated.items.toLocaleString('th-TH')}</td>
+                        <td class="text-right py-3">${aggregated.sales.toLocaleString('th-TH')}</td>
+                        <td class="text-right py-3">${aggregated.adsCost.toLocaleString('th-TH')}</td>
+                        <td class="text-right py-3">${aggregated.vat.toLocaleString('th-TH')}</td>
+                        <td class="text-right py-3 ${aggregated.profit >= 0 ? 'profit-positive' : 'profit-negative'}">
+                            ${aggregated.profit.toLocaleString('th-TH')}
+                        </td>
+                        <td class="text-center py-3">
+                            <button class="text-blue-600 hover:text-blue-800 text-sm" onclick="viewProductDetails('${product.name}')">
+                                ดูรายละเอียด
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function viewProductDetails(productName) {
+            const product = productsData[productName];
+            if (!product) return;
+            
+            const rangeData = getDataInRange(product.dailyData, currentStartDate, currentEndDate);
+            const aggregated = aggregateRangeData(rangeData);
+            
+            alert(`รายละเอียดสินค้า: ${productName}\n\n` +
+                  `ช่วงวันที่: ${formatDateThai(currentStartDate)} - ${formatDateThai(currentEndDate)}\n` +
+                  `จำนวนวัน: ${rangeData.length} วัน\n\n` +
+                  `ออเดอร์: ${aggregated.orders.toLocaleString('th-TH')}\n` +
+                  `ชิ้นสินค้า: ${aggregated.items.toLocaleString('th-TH')}\n` +
+                  `ยอดขาย: ${aggregated.sales.toLocaleString('th-TH')} บาท\n` +
+                  `ค่าโฆษณา: ${aggregated.adsCost.toLocaleString('th-TH')} บาท\n` +
+                  `VAT: ${aggregated.vat.toLocaleString('th-TH')} บาท\n` +
+                  `กำไร: ${aggregated.profit.toLocaleString('th-TH')} บาท`);
+        }
+
+        // Export functionality
+        async function exportDashboard() {
+            const format = document.getElementById('exportFormat').value;
+            const includeSummary = document.getElementById('includeSummary').checked;
+            const includeProducts = document.getElementById('includeProducts').checked;
+            const includeCharts = document.getElementById('includeCharts').checked;
+            const includeTable = document.getElementById('includeTable').checked;
+
+            const exportBtn = document.getElementById('exportConfirmBtn');
+            const spinner = exportBtn.querySelector('.loading-spinner');
+            
+            exportBtn.disabled = true;
+            spinner.classList.remove('hidden');
+
+            try {
+                // Create export container
+                const exportContainer = document.createElement('div');
+                exportContainer.className = 'dashboard-export';
+                exportContainer.style.width = '1200px';
+                exportContainer.innerHTML = `
+                    <div style="text-align: center; margin-bottom: 30px;">
+                        <h1 style="font-size: 28px; font-weight: bold; color: #1f2937; margin-bottom: 10px;">
+                            📊 แดชบอร์ดยอดขายรายวัน
+                        </h1>
+                        <p style="font-size: 16px; color: #6b7280;">
+                            ช่วงวันที่: ${formatDateThai(currentStartDate)} - ${formatDateThai(currentEndDate)}
+                        </p>
+                        <p style="font-size: 14px; color: #9ca3af;">
+                            ส่งออกเมื่อ: ${new Date().toLocaleString('th-TH')}
+                        </p>
+                    </div>
+                `;
+
+                if (includeSummary) {
+                    const summarySection = document.querySelector('section:nth-of-type(2)').cloneNode(true);
+                    exportContainer.appendChild(summarySection);
+                }
+
+                if (includeProducts) {
+                    const productsSection = document.querySelector('section:nth-of-type(4)').cloneNode(true);
+                    exportContainer.appendChild(productsSection);
+                }
+
+                if (includeCharts) {
+                    const chartsSection = document.querySelector('section:nth-of-type(5)').cloneNode(true);
+                    exportContainer.appendChild(chartsSection);
+                }
+
+                if (includeTable) {
+                    const tableSection = document.querySelector('section:nth-of-type(6)').cloneNode(true);
+                    exportContainer.appendChild(tableSection);
+                }
+
+                document.body.appendChild(exportContainer);
+
+                if (format === 'pdf') {
+                    const canvas = await html2canvas(exportContainer, {
+                        scale: 2,
+                        useCORS: true,
+                        allowTaint: true
+                    });
+                    
+                    const { jsPDF } = window.jspdf;
+                    const pdf = new jsPDF('l', 'mm', 'a4');
+                    const imgData = canvas.toDataURL('image/png');
+                    
+                    const pdfWidth = pdf.internal.pageSize.getWidth();
+                    const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+                    
+                    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+                    pdf.save(`dashboard-${currentStartDate}-${currentEndDate}.pdf`);
+                } else {
+                    const canvas = await html2canvas(exportContainer, {
+                        scale: 2,
+                        useCORS: true,
+                        allowTaint: true
+                    });
+                    
+                    const link = document.createElement('a');
+                    link.download = `dashboard-${currentStartDate}-${currentEndDate}.${format}`;
+                    link.href = canvas.toDataURL(`image/${format}`);
+                    link.click();
+                }
+
+                document.body.removeChild(exportContainer);
+                document.getElementById('exportModal').classList.add('hidden');
+                
+            } catch (error) {
+                console.error('Export failed:', error);
+                alert('การส่งออกล้มเหลว กรุณาลองใหม่');
+            } finally {
+                exportBtn.disabled = false;
+                spinner.classList.add('hidden');
+            }
+        }
+
+        // Initialize date inputs with current range
+        document.addEventListener('DOMContentLoaded', function() {
+            const startDateInput = document.getElementById('startDate');
+            const endDateInput = document.getElementById('endDate');
+            
+            if (startDateInput && endDateInput) {
+                startDateInput.value = currentStartDate;
+                endDateInput.value = currentEndDate;
+                updateDateRangeDisplay();
+            }
+        });
+    </script>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9851b06e749cee56',t:'MTc1ODg3ODQ2Ni4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>
